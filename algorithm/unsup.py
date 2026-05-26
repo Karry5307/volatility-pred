@@ -22,39 +22,35 @@ def partition(df, k: int, lookahead: int = 5):
 				result.append(DataSet(data, label))
 	return result
 
-# 对所有的数据进行一个聚类，看看能不能找到一些有意义的模式
-# 聚类结果好像不是很好。
-def KMeansCluster(datasets: list, clusterCount: int = 5):
-	X = []
-	for dataset in datasets:
-		features = dataset.data[["rmean", "rstd", "rskew", "rkurt", "rvol", "pkvol", "gkvol"]].values.flatten()
-		X.append(features)	
-	X = pd.DataFrame(X)
-	kmeans = KMeans(n_clusters=clusterCount, random_state=0).fit(X)
-	return kmeans.labels_
-
 # 使用 K-Medoids 聚类算法，通过如下方式定义距离函数：
-# g(x) = sgn(x) * |x|^p
-# d(x, y) = sqrt(sum_i (g(x_i) - g(y_i))^2)
-def KMedoidsCluster(datasets: list, clusterCount: int = 5, p: float = 0.2, maxIter: int = 100):
+# g(x) = (1 + tanh(ln(99x / (1 - x) + eps)))/ 2
+# 此外，加入时间维度的考量，令 w_i = alpha + (1 - alpha) * exp(-beta * (n - i))
+# # d(x, y) = sqrt(sum_i w_i (g(x_i) - g(y_i))^2)
+def KMedoidsCluster(datasets: list, clusterCount: int = 5, 
+					alpha: float = 0.05, beta: float = 0.09, maxIter: int = 100):
 	X = []
+	featureIndex = ["rvol", "pkvol"]
 	for dataset in datasets:
-		features = dataset.data[["log_return", "rmean", "rstd", "rvol", "gkvol"]].values.flatten()
+		features = dataset.data[featureIndex].values.flatten()
 		X.append(features)
 	X = np.asarray(X, dtype=float)
 
-	sampleCount = X.shape[0]
-	n_clusters = min(clusterCount, sampleCount)
+	assert X.shape[1] % len(featureIndex) == 0
+	sampleCount, n = X.shape[0], X.shape[1] // len(featureIndex)
+	clusterCount = min(clusterCount, sampleCount)
 
-	Xg = np.sign(X) * (np.abs(X) ** p)
+	w = np.array([alpha + (1 - alpha) * np.exp(-beta * (n - i)) for i in range(n)])
+	w = np.repeat(w, len(featureIndex))
+
+	Xg = (1 + np.tanh(np.log(99 * X / (1 - X) + 1e-8))) / 2
 	diff = Xg[:, np.newaxis, :] - Xg[np.newaxis, :, :]
-	D = np.sqrt(np.sum(diff * diff, axis=2))
+	D = np.sqrt(np.sum(w * (diff ** 2), axis=2))
 
 	medoids = np.arange(clusterCount)
 	for _ in range(maxIter):
 		labels = np.argmin(D[:, medoids], axis=1)
 		newMedoids = medoids.copy()
-		for c in range(n_clusters):
+		for c in range(clusterCount):
 			members = np.where(labels == c)[0]
 			if len(members) == 0:
 				nonMedoids = np.setdiff1d(np.arange(sampleCount), newMedoids)
