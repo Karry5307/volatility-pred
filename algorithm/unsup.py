@@ -1,69 +1,73 @@
-import pandas as pd
 import numpy as np
-from sklearn.cluster import KMeans
-
-# data 表示过去 k 个交易日的统计特征，label 表示未来五个交易日的 log_returns
-class DataSet:
-	def __init__(self, data: pd.DataFrame, label: pd.Series):
-		self.data = data
-		self.label = label
-
-# 将股票数据每隔 k 个交易日划分为一个区间，返回一个包含所有区间的列表，每个区间是一个 DataFrame
-# 最后一个区间如果不是 k 个交易日则舍弃。
-# 如果最后一个区间不足 5 个交易日，那么倒数第二个区间也舍弃，保证每个区间至少能看得到未来 5 个交易日的数据
-# 第一个数据段的前几个值不存在滑动窗口导致 NaN 的情况，此时舍弃该段
-def partition(df, k: int, lookahead: int = 5):
-	result = []
-	for i in range(0, len(df), k):
-		if i + k <= len(df) and i + k + lookahead <= len(df):
-			data = df.iloc[i : i + k].reset_index(drop=True)
-			label = df["log_return"].iloc[i + k : i + k + lookahead].reset_index(drop=True)
-			if not data.isna().any().any():
-				result.append(DataSet(data, label))
-	return result
+from .utils import extract
 
 # 使用 K-Medoids 聚类算法，通过如下方式定义距离函数：
 # g(x) = (1 + tanh(ln(99x / (1 - x) + eps)))/ 2
 # 此外，加入时间维度的考量，令 w_i = alpha + (1 - alpha) * exp(-beta * (n - i))
 # # d(x, y) = sqrt(sum_i w_i (g(x_i) - g(y_i))^2)
-def KMedoidsCluster(datasets: list, clusterCount: int = 5, 
+def KMedoidsCluster(dataset: list, clusterCount: int = 5, 
 					alpha: float = 0.05, beta: float = 0.09, maxIter: int = 100):
-	X = []
+	
 	featureIndex = ["rvol", "pkvol"]
-	for dataset in datasets:
-		features = dataset.data[featureIndex].values.flatten()
-		X.append(features)
-	X = np.asarray(X, dtype=float)
+	X, _ = extract(dataset, featureIndex)
 
 	assert X.shape[1] % len(featureIndex) == 0
 	sampleCount, n = X.shape[0], X.shape[1] // len(featureIndex)
 	clusterCount = min(clusterCount, sampleCount)
 
+	if sampleCount == 0:
+		return np.array([], dtype=int)
+
 	w = np.array([alpha + (1 - alpha) * np.exp(-beta * (n - i)) for i in range(n)])
 	w = np.repeat(w, len(featureIndex))
+	sqrtW = np.sqrt(w)
 
-	Xg = (1 + np.tanh(np.log(99 * X / (1 - X) + 1e-8))) / 2
-	diff = Xg[:, np.newaxis, :] - Xg[np.newaxis, :, :]
-	D = np.sqrt(np.sum(w * (diff ** 2), axis=2))
+	# 将特征映射到加权欧氏空间，避免构造全量 n x n 距离矩阵
+	XClip = np.clip(X, 1e-8, 1 - 1e-8)
+	Xg = (1 + np.tanh(np.log(99 * XClip / (1 - XClip) + 1e-8))) / 2
+	Xw = Xg * sqrtW
+
+	def distToPoint(points: np.ndarray, point: np.ndarray):
+		return np.linalg.norm(points - point, axis=1)
+
+	def clusterMedoid(members: np.ndarray, batchSize: int = 128):
+		memberPoints = Xw[members]
+		memberNorm2 = np.sum(memberPoints ** 2, axis=1, keepdims=True)
+		bestMember = members[0]
+		bestScore = np.inf
+		for start in range(0, len(members), batchSize):
+			candidateIds = members[start : start + batchSize]
+			candidatePoints = Xw[candidateIds]
+			candidateNorm2 = np.sum(candidatePoints ** 2, axis=1, keepdims=True).T
+			dist2 = memberNorm2 + candidateNorm2 - 2 * (memberPoints @ candidatePoints.T)
+			dist2 = np.maximum(dist2, 0.0)
+			totalDist = np.sqrt(dist2).sum(axis=0)
+			localBest = np.argmin(totalDist)
+			if totalDist[localBest] < bestScore:
+				bestScore = totalDist[localBest]
+				bestMember = candidateIds[localBest]
+		return bestMember
 
 	medoids = np.arange(clusterCount)
 	for _ in range(maxIter):
-		labels = np.argmin(D[:, medoids], axis=1)
+		medoidPoints = Xw[medoids]
+		distToMedoids = np.stack([distToPoint(Xw, medoidPoint) for medoidPoint in medoidPoints], axis=1)
+		labels = np.argmin(distToMedoids, axis=1)
 		newMedoids = medoids.copy()
 		for c in range(clusterCount):
 			members = np.where(labels == c)[0]
 			if len(members) == 0:
 				nonMedoids = np.setdiff1d(np.arange(sampleCount), newMedoids)
 				if len(nonMedoids) > 0:
-					distToMedoids = np.min(D[nonMedoids][:, newMedoids], axis=1)
-					newMedoids[c] = nonMedoids[np.argmax(distToMedoids)]
+					distToCurrent = np.stack([distToPoint(Xw[nonMedoids], Xw[m]) for m in newMedoids], axis=1)
+					newMedoids[c] = nonMedoids[np.argmax(np.min(distToCurrent, axis=1))]
 				continue
-			intra = D[np.ix_(members, members)]
-			bestId = np.argmin(np.sum(intra, axis=1))
-			newMedoids[c] = members[bestId]
+			newMedoids[c] = clusterMedoid(members)
 		if np.array_equal(newMedoids, medoids):
 			break
 		medoids = newMedoids
 
-	labels = np.argmin(D[:, medoids], axis=1)
+	medoidPoints = Xw[medoids]
+	distToMedoids = np.stack([distToPoint(Xw, medoidPoint) for medoidPoint in medoidPoints], axis=1)
+	labels = np.argmin(distToMedoids, axis=1)
 	return labels

@@ -15,15 +15,15 @@ pro = ts.pro_api()
 
 cacheDir = "cache"
 
-def getStockPool():
-	with open("data/stock_pool.txt", "r") as f:
-		stockPool = [line.strip() for line in f]
+def getStockPool(filename: str):
+	with open(filename, "r") as f:
+		stockPool = [line.split()[0] for line in f if line.startswith("6")]
 	return stockPool
 
 # 获得指定时间段的股票数据并清洗，只保留交易日期和 OHLCV 数据
 # 如果发生网络问题，采用二进制指数退避算法重试
 # 由于接口返回的数据是从新到旧，需要反向转置成从旧到新的顺序，方便进行滑动窗口计算
-def getStockData(code: str, startDate: str, endDate: str, maxRetries: int = 10):
+def getStockDaily(code: str, startDate: str, endDate: str, maxRetries: int = 10):
 	cachedFile = f"{cacheDir}/csv/{"".join(code.split("."))}_{startDate}_{endDate}.csv"
 	if os.path.exists(cachedFile):
 		return pd.read_csv(cachedFile)
@@ -44,8 +44,8 @@ def getStockData(code: str, startDate: str, endDate: str, maxRetries: int = 10):
 	return df
 
 # 获取一组股票的指定时间段数据
-def getMultipleStockData(codes: list, startDate: str, endDate: str):
+def getMultipleStockDaily(codes: list, startDate: str, endDate: str):
 	data = {}
 	for code in codes:
-		data[code] = getStockData(code, startDate, endDate)
+		data[code] = getStockDaily(code, startDate, endDate)
 	return data
