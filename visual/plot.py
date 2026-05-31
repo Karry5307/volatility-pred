@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import pandas as pd
 from sklearn.manifold import TSNE
 
@@ -94,6 +95,68 @@ def plotTSNE(data: list, labels: list):
 	ax.legend(*scatter.legend_elements(), title="Clusters")
 	ax.set_title("t-SNE Visualization of Clusters")
 	ax.grid(True, linestyle="--", linewidth=0.7, alpha=0.4)
+
+	plt.tight_layout()
+	plt.close(fig)
+	return fig
+
+# history 是一个键为 lr 值为 LSTMLrLogEntry 的字典
+# 画两个子图，一个跟测试集 RMSE 有关，另一个跟每个 epoch 训练时间有关，横坐标是 epoch
+def plotLSTMTrainStats(history):
+	baseRGB = mcolors.to_rgb("#7C43AB")
+	whiteRGB = (1.0, 1.0, 1.0)
+	fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+	axes = axes.ravel()
+	n = len(history)
+	for i, (lr, entry) in enumerate(sorted(history.items(), key=lambda x: x[0], reverse=True), start=1):
+		t = (i - 1) / n if n > 0 else 0.0
+		color = tuple((1 - t) * b + t * w for b, w in zip(baseRGB, whiteRGB))
+		rmseList, trainCostList = zip(*entry.history)
+		axes[0].plot(range(1, len(rmseList) + 1), rmseList, label=f"LR={lr}", color=color, linewidth=1.5)
+		axes[1].plot(range(1, len(trainCostList) + 1), trainCostList, label=f"LR={lr}", color=color, linewidth=1.5)
+	
+	axes[0].set_title("Test RMSE over Epochs")
+	axes[0].set_xlabel("Epoch")
+	axes[0].set_ylabel("Test RMSE")
+	# axes[0].legend() 这个图例会居中不美观
+	axes[0].grid(True, linestyle="--", linewidth=0.7, alpha=0.4)
+
+	axes[1].set_title("Training Time over Epochs")
+	axes[1].set_xlabel("Epoch")
+	axes[1].set_ylabel("Training Time (s)")
+	axes[1].legend()
+	axes[1].grid(True, linestyle="--", linewidth=0.7, alpha=0.4)
+
+	plt.tight_layout()
+	plt.close(fig)
+	return fig
+
+# 按头数画 Transformer 的训练统计信息，跟 plotLSTMTrainStats 类似
+# 头数越多颜色越深
+def plotTransformerTrainStats(history):
+	baseRGB = mcolors.to_rgb("#7C43AB")
+	whiteRGB = (1.0, 1.0, 1.0)
+	fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+	axes = axes.ravel()
+	n = len(history)
+	for i, (heads, entry) in enumerate(sorted(history.items(), key=lambda x: x[0]), start=1):
+		t = (n - i) / n if n > 0 else 0.0
+		color = tuple((1 - t) * b + t * w for b, w in zip(baseRGB, whiteRGB))
+		rmseList, trainCostList = zip(*entry.history)
+		axes[0].plot(range(1, len(rmseList) + 1), rmseList, label=f"Heads={heads}", color=color, linewidth=1.5)
+		axes[1].plot(range(1, len(trainCostList) + 1), trainCostList, label=f"Heads={heads}", color=color, linewidth=1.5)
+	
+	axes[0].set_title("Test RMSE over Epochs")
+	axes[0].set_xlabel("Epoch")
+	axes[0].set_ylabel("Test RMSE")
+	axes[0].legend()
+	axes[0].grid(True, linestyle="--", linewidth=0.7, alpha=0.4)
+
+	axes[1].set_title("Training Time over Epochs")
+	axes[1].set_xlabel("Epoch")
+	axes[1].set_ylabel("Training Time (s)")
+	# axes[1].legend() 这个图例会挡线条
+	axes[1].grid(True, linestyle="--", linewidth=0.7, alpha=0.4)
 
 	plt.tight_layout()
 	plt.close(fig)

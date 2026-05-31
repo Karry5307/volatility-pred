@@ -1,6 +1,3 @@
-import numpy as np
-import pandas as pd
-
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from .utils import extract
 
